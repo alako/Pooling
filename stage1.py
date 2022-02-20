@@ -1,5 +1,10 @@
 from pgmpy.models import BayesianModel
 import networkx as nx
+"""
+The first stage includes: 
+- creating a combined graph (acyclicity not guaranteed) based on the list of BNs,
+- reducing the number of edges to achieve a DAG 
+"""
 
 
 def bn_nodes_intersection(bn_list):
@@ -72,7 +77,7 @@ def find_all_bns_with_z(z, bn_list):
     return bn_list
 
 
-def pool_graph(bn_list):
+def create_merged_dag(bn_list):
     graph = []
     graph_dict = {}
     weighted_graph = nx.DiGraph()

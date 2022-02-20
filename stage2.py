@@ -2,6 +2,11 @@ from pgmpy.factors.discrete import TabularCPD
 from pgmpy.inference import VariableElimination
 import numpy as np
 from stage1 import *
+"""
+The second stage includes:
+- computing merged conditional probability distributions (CPD)
+- adding them to a DAG
+"""
 
 
 def transform_cpd_to_table(cpd):
@@ -116,7 +121,7 @@ def combine_cpd(z, card, parents, parents_card, bn_list):
     return cpd
 
 
-def add_cpds(dag, dag_dict, bn_list):
+def add_merged_cpds(dag, dag_dict, bn_list):
     # Defining the network structure
     pooled_bn = BayesianModel(dag)
     for node in dag_dict:
