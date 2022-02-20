@@ -24,13 +24,50 @@ def bn_nodes_union(bn_list):
 
 
 def is_interior(z, bn_list):
+    """
+
+    :param z:
+    :param bn_list:
+    :return:
+        if z is interior: a list of BNs for which parents are not subset of intersection of all nodes,
+        if not: empty list [works as False]
+    """
     interior = False
+    bns = []
     for bn in bn_list:
         if bn.has_node(z):
             parents = bn.get_parents(z)
             if set(parents) <= set(bn_nodes_intersection(bn_list)):
                 interior = True
-    return interior
+                bns.append(bn)
+    return bns
+
+
+def is_interior_single(z, bn_list):
+    """
+
+    :param z:
+    :param bn_list:
+    :return:
+        if z is interior single: a BN for which parents are not subset of intersection of all nodes,
+        if not: None [works as False]
+    """
+    interior_single = False
+    count = 0
+    single_bn = None
+    for bn in bn_list:
+        if bn.has_node(z):
+            parents = bn.get_parents(z)
+            if set(parents) <= set(bn_nodes_intersection(bn_list)):
+                interior_single = True
+            if not set(parents) <= set(bn_nodes_intersection(bn_list)):
+                count += 1
+                single_bn = bn
+    if count != 1:
+        interior_single = False
+    if not interior_single:
+        single_bn = None
+    return single_bn
 
 
 def is_exterior(z, bn_list):
@@ -77,30 +114,64 @@ def find_all_bns_with_z(z, bn_list):
     return bn_list
 
 
-def create_merged_dag(bn_list):
-    graph = []
-    graph_dict = {}
+def merge_parents(node, bn_list, variant=0):
+    """
+    Combine parents from all BNs
+    :param node:
+    :param bn_list:
+    :param variant:
+    - 0: combine
+    - 1: after Feng et al.
+        if node is interior 'single': copy parents from the BN that are not subset of the intersection
+        if node is interior 'double': merge parents from the BNs (!) that are not subset of the intersection
+    :return: set of all parents assigned to the node
+    """
+    # if node belongs to only one BN
+    if is_unique(node, bn_list):
+        # copy parents from that unique BN
+        bn = find_bn_with_z(node, bn_list)
+        node_new_parents = bn.get_parents(node)
+    elif variant == 1:
+        # find bns where parents are not subset of the intersection
+        bns = is_interior(node, bn_list)
+        if len(bns) == 1:
+            # copy parents from the BN that are not subset of the intersection
+            node_new_parents = bns[0].get_parents(node)
+        elif len(bns) > 1:
+            # merge parents from the BNs (!) that are not subset of the intersection
+            node_new_parents = combine_parents(node, bns)
+        else:
+            # node is exterior, so combine parents
+            node_new_parents = combine_parents(node, bn_list)
+    else:
+        # variant 0
+        node_new_parents = combine_parents(node, bn_list)
+    return node_new_parents
+
+
+def create_merged_dag(bn_list, merging_parents_variant=0):
+    """
+
+    :param bn_list:
+    :param merging_parents_variant:
+    - 0: combine
+    - 1: after Feng et al.
+        if node is interior 'single': copy parents from the BN that are not subset of the intersection
+        if node is interior 'double': merge parents from the BNs (!) that are not subset of the intersection
+    :return:
+    """
     weighted_graph = nx.DiGraph()
-    # if z exists in only one BN
     all_nodes = bn_nodes_union(bn_list)
     for node in all_nodes:
-        if is_unique(node, bn_list):
-            # take parents from the unique BN that contains node
-            for bn in bn_list:
-                if bn.has_node(node):
-                    node_new_parents = bn.get_parents(node)
-        else:
-            # combine parents
-            # TODO: some other options
-            node_new_parents = combine_parents(node, bn_list)
+        # find new parents
+        node_new_parents = merge_parents(node, bn_list, merging_parents_variant)
+        # save edges with weights corresponding to the # of occurrences
         for parent in node_new_parents:
-            graph.append((parent, node))
             w = 0
             for bn in bn_list:
                 if bn.has_edge(parent, node):
                     w += 1
             weighted_graph.add_edge(parent, node, weight=w)
-        graph_dict[node] = node_new_parents
     return decycle(weighted_graph)
 
 
