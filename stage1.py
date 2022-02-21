@@ -1,4 +1,5 @@
 from pgmpy.models import BayesianModel
+from more_itertools import powerset
 import networkx as nx
 """
 The first stage includes: 
@@ -149,7 +150,7 @@ def merge_parents(node, bn_list, variant=0):
     return node_new_parents
 
 
-def create_merged_dag(bn_list, merging_parents_variant=0):
+def create_merged_dag(bn_list, merging_parents_variant=0, greedy=2):
     """
 
     :param bn_list:
@@ -158,6 +159,10 @@ def create_merged_dag(bn_list, merging_parents_variant=0):
     - 1: after Feng et al.
         if node is interior 'single': copy parents from the BN that are not subset of the intersection
         if node is interior 'double': merge parents from the BNs (!) that are not subset of the intersection
+    :param greedy:
+    - 0: decycling fully brute-force
+    - 1: decycling half brute-force, half-greedy
+    - 2: decycling fully greedy
     :return:
     """
     weighted_graph = nx.DiGraph()
@@ -172,62 +177,123 @@ def create_merged_dag(bn_list, merging_parents_variant=0):
                 if bn.has_edge(parent, node):
                     w += 1
             weighted_graph.add_edge(parent, node, weight=w)
-    return decycle(weighted_graph)
+    return decycle(weighted_graph, greedy)
 
 
-def decycle(weighted_graph, greedy=True):
-    cycles = list(nx.simple_cycles(weighted_graph))
-    # Greedy option 1
-    if cycles:
-        if greedy:
-            while len(cycles) != 0:
-                edges = list(weighted_graph.edges.data("weight"))
-                edges.sort(key=lambda x: x[2])
-                min_w = edges[0][2]
-                min_edges = [(u, v, w) for (u, v, w) in edges if w == min_w]
-                edges_c = []
-                for (u, v, w) in min_edges:
-                    c = []
-                    for cycle in cycles:
-                        if u in cycle and v in cycle:
-                            c.append(cycle)
-                    edges_c.append((u, v, w, c, len(c)))
-                edges_c.sort(key=lambda x: x[4], reverse=True)
-                weighted_graph.remove_edge(edges_c[0][0], edges_c[0][1])
-                for cycle in edges_c[0][3]:
-                    cycles.remove(cycle)
-            acyclic_graph = weighted_graph
-        # Brute-force
-        else:
-            edges = list(weighted_graph.edges.data("weight"))
-            edges.sort(key=lambda x: x[2])
-            found_acyclic = False
-            acyclic_graphs = []
-            all_combinations = []
-            for edge in edges:
+def find_cycles_containing_edges(edges, cycles):
+    edges_c = []
+    for (u, v, w) in edges:
+        c = []
+        for cycle in cycles:
+            if u in cycle and v in cycle:
+                c.append(cycle)
+        edges_c.append((u, v, w, c, len(c)))
+    return edges_c
+
+
+def greedy_decycling(weighted_graph, cycles):
+    while len(cycles) != 0:
+        edges = list(weighted_graph.edges.data("weight"))
+        # sort edges in decreasing order using their weights
+        edges.sort(key=lambda x: x[2])
+        min_w = edges[0][2]
+        # consider the subset of edges with the smallest weight
+        min_edges = [(u, v, w) for (u, v, w) in edges if w == min_w]
+        edges_c = find_cycles_containing_edges(min_edges, cycles)
+        # sort edges by the number of cycles they belong to (from max to min)
+        edges_c.sort(key=lambda x: x[4], reverse=True)
+        # TODO: remove random edge with max cycles, not the first one
+        weighted_graph.remove_edge(edges_c[0][0], edges_c[0][1])
+        for cycle in edges_c[0][3]:
+            cycles.remove(cycle)
+    return weighted_graph
+
+
+def filter_edges_in_cycles(edges, cycles):
+    edges_in_cycles = []
+    for (u, v, w) in edges:
+        in_cycle = False
+        for cycle in cycles:
+            if u in cycle and v in cycle:
+                in_cycle = True
+        if in_cycle:
+            edges_in_cycles.append((u,v,w))
+    return edges_in_cycles
+
+
+def half_greedy_decycling(weighted_graph, cycles):
+    while len(cycles) != 0:
+        edges = list(weighted_graph.edges.data("weight"))
+        edges_in_cycles = filter_edges_in_cycles(edges, cycles)
+        # sort edges in decreasing order using their weights
+        edges_in_cycles.sort(key=lambda x: x[2])
+        min_w = edges_in_cycles[0][2]
+        # consider the subset of edges with the smallest weight
+        min_edges = [(u, v, w) for (u, v, w) in edges_in_cycles if w == min_w]
+        edges_c = find_cycles_containing_edges(min_edges, cycles)
+        # check if deleting all min_edges results in an acyclic graph
+        new_graph = weighted_graph.copy()
+        min_weight = 0
+        for edge in min_edges:
+            min_weight += edge[2]
+            new_graph.remove_edge(edge)
+        if nx.is_directed_acyclic_graph(new_graph):
+            # if yes, find the smallest subset that gives us an acyclic graph
+            dag = new_graph
+            subsets = powerset(edges_c)
+            for subset in subsets:
                 new_graph = weighted_graph.copy()
-                new_graph.remove_edge(edge)
-                found_acyclic = nx.is_directed_acyclic_graph(new_graph)
-                if found_acyclic:
-                    acyclic_graphs.append(new_graph)
-                all_combinations.append([edge])
+                for edge in subset:
+                    new_graph.remove_edge(edge)
+                if nx.is_directed_acyclic_graph(new_graph):
+                    return new_graph
+            return dag
+        else:
+            # if no, delete edges that reduce the number of cycles and go back
+            for edge in edges_c:
+                remove = False
+                for cycle in edge[3]:
+                    if cycle in cycles:
+                        remove = True
+                if remove:
+                    weighted_graph.remove_edge(edge[0], edge[1])
+                    for cycle in edge[3]:
+                        cycles.remove(cycle)
+    return weighted_graph
 
-            while not found_acyclic:
-                new_all_combinations = []
-                for comb in all_combinations:
-                    for edge in edges:
-                        new_comb = comb.copy()
-                        new_comb.append(edge)
-                        new_all_combinations.append(new_comb)
-                        # check this comb
-                        new_graph = weighted_graph.copy()
-                        new_graph.remove_edges(new_comb)
-                        found_acyclic = nx.is_directed_acyclic_graph(new_graph)
-                        if found_acyclic:
-                            acyclic_graphs.append(new_graph)
-                # select the best
-                all_combinations = new_all_combinations
-            acyclic_graph = acyclic_graphs[0]
+
+def brute_force_decycling(weighted_graph, cycles):
+    edges = list(weighted_graph.edges.data("weight"))
+    edges_in_cycles = filter_edges_in_cycles(edges, cycles)
+    edges_c = find_cycles_containing_edges(edges_in_cycles, cycles)
+    min_weight = 0
+    for (u, v, w) in edges_in_cycles:
+        min_weight += w
+    subsets = powerset(edges_c)
+    # TODO: sort subsets using cumulative weight
+    for subset in subsets:
+        weight = 0
+        for (u, v, w) in subset:
+            weight += w
+        if weight <= min_weight:
+            new_graph = weighted_graph.copy()
+            for edge in subset:
+                new_graph.remove_edge(edge)
+            if nx.is_directed_acyclic_graph(new_graph):
+                dag = new_graph
+                min_weight = weight
+    return dag
+
+
+def decycle(weighted_graph, greedy=2):
+    cycles = list(nx.simple_cycles(weighted_graph))
+    if cycles:
+        if greedy == 2:
+            acyclic_graph = greedy_decycling(weighted_graph, cycles)
+        elif greedy == 1:
+            acyclic_graph = half_greedy_decycling(weighted_graph, cycles)
+        else:
+            acyclic_graph = brute_force_decycling(weighted_graph, cycles)
     else:
         acyclic_graph = weighted_graph
     graph = list(acyclic_graph.edges)
