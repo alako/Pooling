@@ -12,7 +12,7 @@ def check_independencies_preservation(bn_list, pooled_bn: BayesianModel):
         common_independencies.intersection_update(ind)
     print(common_independencies)
     print(final_ind)
-    print(final_ind-common_independencies)
+    print(common_independencies-final_ind)
     if common_independencies.issubset(final_ind):
         return True
     return False
