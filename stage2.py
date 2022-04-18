@@ -2,6 +2,7 @@ from pgmpy.factors.discrete import TabularCPD
 from pgmpy.inference import VariableElimination
 import numpy as np
 from stage1 import *
+from functools import reduce
 """
 The second stage includes:
 - computing merged conditional probability distributions (CPD)
@@ -15,20 +16,20 @@ def transform_cpd_to_table(cpd):
         for x in cpd:
             col.append([x])
         return col
-    table = []
-    for x in cpd:  # node states
-        parents_list = []
-        for y in x:  # parent states
-            parents_list.append(cpd[x, y])
-        table.append(parents_list)
-    return table
+    return cpd
+    # table = []
+    # for x in cpd:  # node states
+    #     parents_list = []
+    #     for y in x:  # parent states
+    #         parents_list.append(cpd[x, y])
+    #     table.append(parents_list)
+    # return table
 
 
 def parent_states_combinations(parents, parents_card, bn_list):
     all_combinations = []
     if not parents:
         return [[]]
-    from functools import reduce
     combinations_no = reduce(lambda x, y: x * y, parents_card)  # multiply cardinality of all parents
     for parent in parents:
         bn = find_bn_with_z(parent, bn_list)
@@ -67,61 +68,70 @@ def normalize_cpd(values):
     return normalized_values
 
 
-def combine_cpd(z, card, parents, parents_card, bn_list):
+def is_bradley_pooling_possible(parents, bn_list):
+    bradley_pooling_possible = True
+    for parent in parents:
+        for bn in bn_list:
+            if not bn.has_node(parent):
+                bradley_pooling_possible = False
+    return bradley_pooling_possible
+
+
+def bradley_pooling(infer, z, evidence, z_state):
+    posterior_z = 0
+    for inf in infer:
+        posterior_zi = inf.query([z], evidence=evidence).values[z_state]
+        posterior_z += posterior_zi
+    posterior_z /= len(infer)
+    return posterior_z
+
+
+def feng_pooling(infer, z, evidence, z_state, parents_all):
+    evidence_all = []
+    for parents_i in parents_all:
+        for p in parents_i:
+            evidence_i = {p: evidence[p]}
+            evidence_all.append(evidence_i)
+    x, y = 0, 1
+    for inf, evidence_i in zip(infer, evidence_all):
+        posterior_zi = inf.query([z], evidence=evidence_i).values[z_state]
+        x += posterior_zi
+        y *= posterior_zi
+    return x - y
+
+
+def combine_cpd(z, card, parents, parents_card, bn_list, variant='bradley'):
     # for nodes contained by only one BN
     if is_unique(z, bn_list):
         bn = find_bn_with_z(z, bn_list)
+        # values = bn.get_cpds(z).values
         values = transform_cpd_to_table(bn.get_cpds(z).values)
-        parents = bn.get_parents(z)
-        parents_card = []
-        for parent in parents:
-            parents_card.append(bn.get_cardinality(parent))
     else:
         bn_list = find_all_bns_with_z(z, bn_list)
         all_parents_combinations = parent_states_combinations(parents, parents_card, bn_list)
         values = []
-        # TODO: extend for more BNs
-        bn1 = bn_list[0]
-        bn2 = bn_list[1]
-        infer1 = VariableElimination(bn1)
-        infer2 = VariableElimination(bn2)
-        parents1 = bn1.get_parents(z)
-        parents2 = bn2.get_parents(z)
+        infer = [VariableElimination(bn) for bn in bn_list]
+        parents_all = [bn.get_parents(z) for bn in bn_list]
         for z_state in range(card):
             parent_values = []
             for parent_comb in all_parents_combinations:
                 evidence = {}
                 for idx, state in enumerate(parent_comb):
                     evidence[parents[idx]] = state
-                # OPTION 1: Bradley variant of linear pooling
-                pooling_possible = True
-                for parent in parents:
-                    if (not bn1.has_node(parent)) or (not bn2.has_node(parent)):
-                        pooling_possible = False
-                if pooling_possible:
-                    posterior_z1 = infer1.query([z], evidence=evidence).values[z_state]
-                    posterior_z2 = infer2.query([z], evidence=evidence).values[z_state]
-                    posterior_z = (posterior_z1+posterior_z2)/2
+                if variant == 'bradley' and is_bradley_pooling_possible(parents, bn_list):
+                    # OPTION 1: Bradley variant of linear pooling
+                    posterior_z = bradley_pooling(infer, z, evidence, z_state)
                 else:
-                    # TODO: consider the case when a node is parentless on other BNs
                     # OPTION 2: Feng variant of combining CPDs
-                    evidence1, evidence2 = {}, {}
-                    for p in parents1:
-                        evidence1[p] = evidence[p]
-                    for p in parents2:
-                        evidence2[p] = evidence[p]
-                    posterior_z1 = infer1.query([z], evidence=evidence1).values[z_state]
-                    posterior_z2 = infer2.query([z], evidence=evidence2).values[z_state]
-                    posterior_z = (posterior_z1 + posterior_z2) - (posterior_z1 * posterior_z2)
+                    posterior_z = feng_pooling(infer, z, evidence, z_state, parents_all)
                 parent_values.append(posterior_z)
-            # TODO: no parent case, prior combine
             values.append(parent_values)
     values = normalize_cpd(np.array(values))
     cpd = TabularCPD(z, card, values, evidence=parents, evidence_card=parents_card)
     return cpd
 
 
-def add_merged_cpds(dag, dag_dict, bn_list):
+def add_merged_cpds(dag, dag_dict, bn_list, cpd_variant='bradley'):
     # Defining the network structure
     pooled_bn = BayesianModel(dag)
     for node in dag_dict:
@@ -129,14 +139,16 @@ def add_merged_cpds(dag, dag_dict, bn_list):
         card = 2
         for bn in bn_list:
             if bn.has_node(node):
-                card = bn.get_cardinality(node)
+                card = bn.get_cardinality()[node]
         parents_card = []
         for parent in parents:
             for bn in bn_list:
                 if bn.has_node(parent):
-                    parent_card = bn.get_cardinality(parent)
+                    parent_card = bn.get_cardinality()[parent]
             parents_card.append(parent_card)
-        cpd = combine_cpd(node, card, parents, parents_card, bn_list)
+        cpd = combine_cpd(node, card, parents, parents_card, bn_list, cpd_variant)
         pooled_bn.add_cpds(cpd)
     print(pooled_bn.check_model())
     return pooled_bn
+
+

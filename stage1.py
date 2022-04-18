@@ -1,5 +1,7 @@
 from pgmpy.models import BayesianModel
 from more_itertools import powerset
+from random import randrange
+
 import networkx as nx
 """
 The first stage includes: 
@@ -202,8 +204,9 @@ def greedy_decycling(weighted_graph, cycles):
         edges_c = find_cycles_containing_edges(min_edges, cycles)
         # sort edges by the number of cycles they belong to (from max to min)
         edges_c.sort(key=lambda x: x[4], reverse=True)
-        # TODO: remove random edge with max cycles, not the first one
-        weighted_graph.remove_edge(edges_c[0][0], edges_c[0][1])
+        max_c_edges = [(u, v, w, c, lc) for (u, v, w, c, lc) in edges_c if lc == edges_c[0][4]]
+        i = randrange(len(max_c_edges))
+        weighted_graph.remove_edge(edges_c[i][0], edges_c[i][1])
         for cycle in edges_c[0][3]:
             cycles.remove(cycle)
     return weighted_graph
@@ -217,7 +220,7 @@ def filter_edges_in_cycles(edges, cycles):
             if u in cycle and v in cycle:
                 in_cycle = True
         if in_cycle:
-            edges_in_cycles.append((u,v,w))
+            edges_in_cycles.append((u, v, w))
     return edges_in_cycles
 
 
@@ -267,6 +270,7 @@ def brute_force_decycling(weighted_graph, cycles):
     edges_in_cycles = filter_edges_in_cycles(edges, cycles)
     edges_c = find_cycles_containing_edges(edges_in_cycles, cycles)
     min_weight = 0
+    # TODO: weight corresponding to confirmation scores
     for (u, v, w) in edges_in_cycles:
         min_weight += w
     subsets = powerset(edges_c)
@@ -285,7 +289,7 @@ def brute_force_decycling(weighted_graph, cycles):
     return dag
 
 
-def decycle(weighted_graph, greedy=2):
+def decycle(weighted_graph, greedy=1):
     cycles = list(nx.simple_cycles(weighted_graph))
     if cycles:
         if greedy == 2:
