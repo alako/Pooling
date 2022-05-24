@@ -10,9 +10,9 @@ def check_independencies_preservation(bn_list, pooled_bn: BayesianModel):
     for bn in bn_list:
         ind = set(bn.get_independencies().closure().independencies)
         common_independencies.intersection_update(ind)
-    print(common_independencies)
-    print(final_ind)
-    print(common_independencies-final_ind)
+    print(f'Common independencies: {common_independencies}')
+    print(f'Final: {final_ind}')
+    print(f'Ind not preserved: {common_independencies-final_ind}')
     if common_independencies.issubset(final_ind):
         return True
     return False

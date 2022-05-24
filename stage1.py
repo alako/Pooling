@@ -19,11 +19,11 @@ def bn_nodes_intersection(bn_list):
 
 
 def bn_nodes_union(bn_list):
-    common_variables = set()
+    all_variables = set()
     for bn in bn_list:
         nodes = set(bn.nodes)
-        common_variables = common_variables.union(nodes)
-    return common_variables
+        all_variables = all_variables.union(nodes)
+    return all_variables
 
 
 def is_interior(z, bn_list):
@@ -197,6 +197,7 @@ def greedy_decycling(weighted_graph, cycles):
     while len(cycles) != 0:
         edges = list(weighted_graph.edges.data("weight"))
         # sort edges in decreasing order using their weights
+        # TODO: reverse order?
         edges.sort(key=lambda x: x[2])
         min_w = edges[0][2]
         # consider the subset of edges with the smallest weight
@@ -289,7 +290,7 @@ def brute_force_decycling(weighted_graph, cycles):
     return dag
 
 
-def decycle(weighted_graph, greedy=1):
+def decycle(weighted_graph: nx.DiGraph, greedy=1):
     cycles = list(nx.simple_cycles(weighted_graph))
     if cycles:
         if greedy == 2:

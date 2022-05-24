@@ -1,6 +1,7 @@
 from pgmpy.factors.discrete import TabularCPD
 from pgmpy.inference import VariableElimination
 import numpy as np
+from pgmpy.models import BayesianNetwork
 from stage1 import *
 from functools import reduce
 """
@@ -133,7 +134,12 @@ def combine_cpd(z, card, parents, parents_card, bn_list, variant='bradley'):
 
 def add_merged_cpds(dag, dag_dict, bn_list, cpd_variant='bradley'):
     # Defining the network structure
-    pooled_bn = BayesianModel(dag)
+    pooled_bn = BayesianNetwork(dag)
+    all_nodes = bn_nodes_union(bn_list)
+    for node in all_nodes:
+        if not pooled_bn.has_node(node):
+            pooled_bn.add_node(node)
+            dag_dict[node] = set()
     for node in dag_dict:
         parents = list(dag_dict[node])
         card = 2
