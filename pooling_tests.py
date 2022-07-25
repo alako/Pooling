@@ -21,7 +21,9 @@ model2 = bn4()
 
 # Pooling
 bn_list = [model1, model2]
+# dag, dag_dict = create_merged_dag(bn_list)
 pdag, dag, dag_dict = create_merged_dag(bn_list)
+
 pooled_bn = add_merged_cpds(dag, dag_dict, bn_list)
 print("Independencies preserved:")
 print(check_independencies_preservation(bn_list, pooled_bn))
@@ -34,6 +36,7 @@ ax[0].set_axis_off()
 nx.draw(model2, with_labels=True, ax=ax[1])
 ax[1].set_axis_off()
 nx.draw(pdag, with_labels=True, ax=ax[2])
+# nx.draw(pooled_bn, with_labels=True, ax=ax[2])
 ax[2].set_axis_off()
 nx.draw(pooled_bn, with_labels=True, ax=ax[3])
 ax[3].set_axis_off()

@@ -1,13 +1,14 @@
 from typing import List
 
 import networkx as nx
+from matplotlib import pyplot as plt
 from pgmpy.independencies import Independencies
 from pgmpy.estimators import PC
 import random
 
 from pgmpy.models import BayesianNetwork
 
-from stage1 import decycle
+from stage1 import decycle, bn_nodes_union
 
 
 def find_common_independencies(bn_list):
@@ -137,9 +138,6 @@ def pdag_to_dag(pdag, bn_list):
         dag = nx.compose(dag, b)
 
     return dag.edges, nx.to_dict_of_lists(dag)
-
-
-
     # sort edges in decreasing order using their weights
     # undirected_edges.sort(key=lambda x: x[2], reverse=True)
 
@@ -164,7 +162,6 @@ def pdag_to_dag(pdag, bn_list):
     #             remove_edges.add((p, v))
     #     for (a, b) in remove_edges:
     #         pdag.remove_edge(a, b)
-
     # Prepare dictionary
     # graph_dict = {}
     # for v in list(pdag.nodes):
@@ -174,8 +171,40 @@ def pdag_to_dag(pdag, bn_list):
     # return list(pdag.edges), graph_dict
 
 
-def independencies_to_pdag(ind):
-    pass
+def create_skeleton(ind: Independencies, graph: nx.Graph):
+    for independence in ind.get_assertions():
+        for u in independence.event1:
+            for v in independence.event2:
+                if graph.has_edge(u, v):
+                    graph.remove_edge(u, v)
+    return graph
+
+
+def find_v_structures(ind: Independencies, skeleton: nx.Graph):
+    directed = skeleton.to_directed()
+    for independence in ind.get_assertions():
+        if not independence.event3:
+            for u in independence.event1:
+                for v in independence.event2:
+                    neighbors = nx.common_neighbors(skeleton, u, v)
+                    for n in neighbors:
+                        directed.remove_edge(n, u)
+                        directed.remove_edge(n, v)
+    # Some v-structures can conflict with each other, in this case edge is removed,
+    # TODO:  but then, the other edge doesn't need to be directed
+    return directed
+
+
+def independencies_to_pdag(ind, graph):
+    skeleton = create_skeleton(ind, graph)
+    pdag = find_v_structures(ind, skeleton)
+    pdag = propagate_edges(ind, pdag)
+    return pdag
+
+
+def create_fully_connected_graph(bn_list):
+    nodes = bn_nodes_union(bn_list)
+    return nx.complete_graph(nodes)
 
 
 def create_merged_dag(bn_list):
@@ -185,7 +214,20 @@ def create_merged_dag(bn_list):
     :return:
     """
     ind = find_common_independencies(bn_list)
-    pdag = PC(independencies=ind).estimate(ci_test="independence_match", return_type="pdag")
-    # pdag = independencies_to_pdag(ind)
-    dag, dag_dict = pdag_to_dag(pdag, bn_list)
-    return pdag, dag, dag_dict
+    graph = create_fully_connected_graph(bn_list)
+    # PC makes sure no other ind are added
+    # pdag = PC(independencies=ind).estimate(ci_test="independence_match", return_type="pdag")
+    pdag = independencies_to_pdag(ind, graph)
+    # dag, dag_dict = pdag_to_dag(pdag, bn_list)
+
+    fig, axes = plt.subplots(nrows=1, ncols=3)
+    ax = axes.flatten()
+    nx.draw(bn_list[0], with_labels=True, ax=ax[0])
+    ax[0].set_axis_off()
+    nx.draw(bn_list[1], with_labels=True, ax=ax[1])
+    ax[1].set_axis_off()
+    nx.draw(pdag, with_labels=True, ax=ax[2])
+    ax[2].set_axis_off()
+    plt.show()
+    # return pdag, dag, dag_dict
+    return pdag
